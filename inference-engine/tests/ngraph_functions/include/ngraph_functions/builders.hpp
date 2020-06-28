@@ -133,11 +133,8 @@ std::shared_ptr<ngraph::Node> makeSplit(const ngraph::Output<Node> &in,
 std::shared_ptr<ngraph::Node> makeActivation(const ngraph::Output<Node> &in,
                                              const element::Type &type,
                                              ngraph::helpers::ActivationTypes activationType,
-                                             std::vector<size_t> inShape = {});
-
-std::shared_ptr<ngraph::Node> makeActivation(const ngraph::ParameterVector &parameters,
-                                             const element::Type &type,
-                                             ngraph::helpers::ActivationTypes activationType);
+                                             double alpha = 0.0f,
+                                             double beta = 0.0f);
 
 std::shared_ptr<ngraph::Node> makeEltwise(const ngraph::Output<Node> &in0,
                                           const ngraph::Output<Node> &in1,
@@ -308,6 +305,11 @@ std::shared_ptr<ngraph::Node> makeComparison(const ngraph::Output<Node> &in0,
 std::shared_ptr<ngraph::Node> makeLogical(const ngraph::Output<Node> &in0,
                                           const ngraph::Output<Node> &in1,
                                           ngraph::helpers::LogicalTypes logicalType);
+
+std::shared_ptr<Node> makeScaleShift(const ngraph::Output<Node> &in,
+                                     const element::Type &type,
+                                     const std::vector<float> &scales,
+                                     const std::vector<float> &shifts);
 
 }  // namespace builder
 }  // namespace ngraph
