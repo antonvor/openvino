@@ -99,6 +99,7 @@ std::vector<fusingSpecificParams> fusingParamsSet {
     fusingFakeQuantizePerChannelRelu,
     fusingSum,
     fusingSwishPattern,
+    fusingHSwishPattern,
 };
 
 /* INSTANCES */

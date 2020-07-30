@@ -52,6 +52,8 @@ const auto fusingSum = fusingSpecificParams{nullptr,
 /* "HARD" FUSING PATTERNS */
 std::shared_ptr<ngraph::Function> makeSwishPattern();
 const auto fusingSwishPattern = fusingSpecificParams{makeSwishPattern(), {}, {"Swish"}};
+std::shared_ptr<ngraph::Function> makeHSwishPattern();
+const auto fusingHSwishPattern = fusingSpecificParams{makeHSwishPattern(), {}, {"HSwish"}};
 
 std::string postNodes2str(const std::vector<postNode> &postNodes);
 std::shared_ptr<ngraph::Function> makeNgraphFunction(const ngraph::element::Type &ngPrc, ngraph::ParameterVector &params,

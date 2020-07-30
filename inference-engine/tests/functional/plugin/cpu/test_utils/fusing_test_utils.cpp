@@ -20,6 +20,22 @@ std::shared_ptr<ngraph::Function> makeSwishPattern() {
     return func;
 }
 
+std::shared_ptr<ngraph::Function> makeHSwishPattern() {
+    auto ngPrc = FuncTestUtils::PrecisionUtils::convertIE2nGraphPrc(InferenceEngine::Precision::FP32);
+    auto params = ngraph::builder::makeParams(ngPrc, {fakeShape});
+    auto paramOuts = ngraph::helpers::convert2OutputVector(
+            ngraph::helpers::castOps2Nodes<ngraph::op::Parameter>(params));
+    auto addConst = ngraph::opset1::Constant::create(ngraph::element::f32, ngraph::Shape{1}, {3.0f});
+    auto add = std::make_shared<ngraph::opset1::Add>(paramOuts[0], addConst);
+    auto clamp = ngraph::builder::makeActivation(add, ngPrc, ngraph::helpers::Clamp, 0.0, 6.0);
+    auto multiplyConst = ngraph::opset1::Constant::create(ngraph::element::f32, ngraph::Shape{1}, {1.0f / 6.0f});
+    auto multiply = std::make_shared<ngraph::opset1::Multiply>(clamp, multiplyConst);
+    auto resultMul = std::make_shared<ngraph::opset1::Multiply>(paramOuts[0], multiply);
+    ngraph::ResultVector results{std::make_shared<ngraph::opset1::Result>(resultMul)};
+    auto func = std::make_shared<ngraph::Function>(results, params, "HSwishOptimization");
+    return func;
+}
+
 std::string postNodes2str(const std::vector<postNode> &postNodes) {
     std::string str;
     for (auto &node : postNodes) {
