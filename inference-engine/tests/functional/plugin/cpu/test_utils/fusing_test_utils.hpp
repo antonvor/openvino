@@ -33,6 +33,8 @@ const auto fusingClamp = fusingSpecificParams{nullptr,
         {{ngraph::builder::makeActivation(fakeConstNode, ngraph::element::f32, ngraph::helpers::Clamp, 3.0f, 6.0f)}}, {"Clamp"}};
 const auto fusingPRelu = fusingSpecificParams{nullptr,
         {{ngraph::builder::makeActivation(fakeConstNode, ngraph::element::f32, ngraph::helpers::LeakyRelu), {{"Granularity" , "PerChannel"}}}}, {"PRelu"}};
+const auto fusingMish = fusingSpecificParams{nullptr,
+        {{ngraph::builder::makeActivation(fakeConstNode, ngraph::element::f32, ngraph::helpers::Mish)}}, {"Mish"}};
 
 const auto fusingReluScaleShift = fusingSpecificParams{nullptr,
         {{ngraph::builder::makeActivation(fakeConstNode, ngraph::element::f32, ngraph::helpers::Relu)},

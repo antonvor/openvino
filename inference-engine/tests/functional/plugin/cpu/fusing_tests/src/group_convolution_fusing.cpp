@@ -94,6 +94,7 @@ std::vector<fusingSpecificParams> fusingParamsSet {
     fusingSigmoid,
     fusingClamp,
     fusingPRelu,
+    fusingMish,
     // other patterns
     fusingReluScaleShift,
     fusingFakeQuantizePerChannelRelu,
