@@ -92,7 +92,7 @@ ie_option (ENABLE_UNSAFE_LOCATIONS "skip check for MD5 for dependency" OFF)
 
 ie_option (ENABLE_ALTERNATIVE_TEMP "in case of dependency conflict, to avoid modification in master, use local copy of dependency" ON)
 
-ie_option (ENABLE_OPENCV "enables OpenCV" ON)
+ie_option (ENABLE_OPENCV "enables OpenCV" OFF)
 
 ie_option (ENABLE_PYTHON "enables ie python bridge build" OFF)
 
