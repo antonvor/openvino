@@ -777,6 +777,8 @@ void MKLDNNGraph::Infer(int batch) {
 
         if (!graphNodes[i]->isConstant()) {
             OV_ITT_SCOPED_TASK(itt::domains::MKLDNNPlugin, graphNodes[i]->profiling.execute);
+            if (graphNodes[i]->getName() == "Add_835")
+                std::cout << "here\n";
             graphNodes[i]->execute(stream);
         }
         ENABLE_DUMP(do_after(DUMP_DIR, graphNodes[i]));
