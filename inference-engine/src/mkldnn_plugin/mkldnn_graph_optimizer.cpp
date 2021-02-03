@@ -948,6 +948,10 @@ void MKLDNNGraphOptimizer::FuseConvolutionAndDWConvolution(MKLDNNGraph &graph) {
         auto childConvNode = parentConvNode->getChildEdgeAt(0)->getChild();
         if (!isSutableChildConvolution(parentConvNode, childConvNode)) continue;
 
+        const auto nthr = dnnl_get_max_threads();
+        auto l2_cache = dnnl::impl::cpu::platform::get_per_core_cache_size(2) * nthr;
+        if (l2_cache * 2 >= parentConvNode->getChildEdgeAt(0)->getDims().size() * sizeof(float)) continue;
+
         parentConvNode->fuseWith(childConvNode);
 
         for (auto node : childConvNode->getFusedWith())
