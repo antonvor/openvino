@@ -44,9 +44,9 @@
  *    additional information to std output.
  *
  *****************************************************/
-// #define BLOB_DUMP_PATH "mkldnn_dump"
+#define BLOB_DUMP_PATH "/home/anton/Code/dump"
 // #define PRINT_GRAPH_INFO
-// #define DUMP_AS_TEXT
+#define DUMP_AS_TEXT
 // #define DUMP_INTERNAL_BLOBS
 
 #ifdef BLOB_DUMP_PATH
@@ -772,13 +772,14 @@ void MKLDNNGraph::Infer(int batch) {
         if (batch > 0)
             graphNodes[i]->setDynamicBatchLim(batch);
 
+        if (graphNodes[i]->getName() == "BatchNormalization_4/variance/Fused_Add_")
         ENABLE_DUMP(do_before(DUMP_DIR, graphNodes[i]));
 
         if (!graphNodes[i]->isConstant()) {
             OV_ITT_SCOPED_TASK(itt::domains::MKLDNNPlugin, graphNodes[i]->profiling.execute);
             graphNodes[i]->execute(stream);
         }
-
+        if (graphNodes[i]->getName() == "BatchNormalization_4/variance/Fused_Add_")
         ENABLE_DUMP(do_after(DUMP_DIR, graphNodes[i]));
     }
 
