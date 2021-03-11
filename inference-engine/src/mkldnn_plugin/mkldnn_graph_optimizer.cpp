@@ -880,9 +880,13 @@ void MKLDNNGraphOptimizer::FuseConvolutionAndDWConvolution(MKLDNNGraph &graph) {
         if (!parentConvolutionNode->weightsZeroPoints.empty())
             return false;
 
+//        bool withBias = (layer->_biases != nullptr && layer->_biases->size() != 0) ||
+//                parentConvolutionNode->getBaseIntputsNumber() == 3;
+//        if (!withBias) return false;
+
         // TODO [oneDNN]: is it still valide constrain on conv to fuse in?
         bool isSupportedParams = layer->_group == 1 &&
-                ((is1x1Convolution(layer) && everyone_is(1, layer->_stride[X_AXIS], layer->_stride[Y_AXIS])) || !is1x1Convolution(layer)) &&
+                ((is1x1Convolution(layer) && everyone_is(1, layer->_stride[X_AXIS], layer->_stride[Y_AXIS]))) &&
                 one_of(layer->outData[0].get()->getPrecision(), Precision::FP32) &&
                 node->getChildEdgeAt(0)->getDims().ndims() == 4;
         if (!isSupportedParams) return false;
@@ -949,11 +953,11 @@ void MKLDNNGraphOptimizer::FuseConvolutionAndDWConvolution(MKLDNNGraph &graph) {
 
         auto inDims = childNode->inDims[0];
         auto outDims = childNode->outDims[0];
-        int elemSize = MKLDNNExtensionUtils::sizeOfDataType(MKLDNNExtensionUtils::IEPrecisionToDataType(layer->precision));
+         int elemSize = MKLDNNExtensionUtils::sizeOfDataType(MKLDNNExtensionUtils::IEPrecisionToDataType(layer->precision));
 
-        int L3_cache_size = utils::get_cache_size(3, false);
-        int dw_conv_input_size = inDims[0] * inDims[1] * inDims[2] * inDims[3] * elemSize;
-        int dw_conv_output_size = outDims[0] * outDims[1]* outDims[2] * outDims[3] * elemSize;
+         int L3_cache_size = utils::get_cache_size(3, false);
+         int dw_conv_input_size = inDims[0] * inDims[1] * inDims[2] * inDims[3] * elemSize;
+         int dw_conv_output_size = outDims[0] * outDims[1]* outDims[2] * outDims[3] * elemSize;
 
         auto* parentConvolutionNode = dynamic_cast<MKLDNNConvolutionNode*>(parentNode.get());
         if (parentConvolutionNode == nullptr)
@@ -967,7 +971,8 @@ void MKLDNNGraphOptimizer::FuseConvolutionAndDWConvolution(MKLDNNGraph &graph) {
 
         if (isInt8 || !isAVX512NotSupported) return false;
 
-        return isInt8 ? isAVX512NotSupported : (dw_conv_input_size + dw_conv_output_size > L3_cache_size / 2);
+         return isInt8 ? isAVX512NotSupported : (dw_conv_input_size + dw_conv_output_size > L3_cache_size / 2);
+//        return isInt8 ? isAVX512NotSupported : true;
     };
 
     for (int i = 0; i < graphNodes.size(); i++) {
