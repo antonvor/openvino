@@ -8,7 +8,7 @@
 
 #include <mkldnn_types.h>
 #include "utils/bfloat16.hpp"
-#include <cpu/x64/jit_uni_quantization_injector.hpp>
+#include <cpu/x64/injectors/jit_uni_quantization_injector.hpp>
 #include <cpu/ref_eltwise.hpp>
 
 #include "mkldnn_extension_utils.h"
