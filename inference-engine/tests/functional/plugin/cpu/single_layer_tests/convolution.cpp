@@ -144,6 +144,27 @@ const std::vector<fusingSpecificParams> fusingParamsSetBF16{
         fusingSum
 };
 
+const std::vector<fusingSpecificParams> fusingParamsSetI8{
+        emptyFusingSpec,
+        // activations
+        fusingRelu,
+        fusingElu,
+        fusingSigmoid,
+        fusingClamp,
+        fusingPRelu,
+        // todo: [antonvor] not supported yet
+//        fusingSwish,
+        fusingHSwish,
+        fusingMish,
+        // other patterns
+        fusingReluScaleShift,
+        fusingFakeQuantizePerTensorRelu,
+        fusingFakeQuantizePerChannelRelu,
+        // todo: [antonvor] not supported yet
+//        fusingSumEluFQ,
+//        fusingSum
+};
+
 const std::map<std::string, std::string> cpuEmptyPluginConfig;
 const std::map<std::string, std::string> cpuBF16PluginConfig = { { PluginConfigParams::KEY_ENFORCE_BF16, PluginConfigParams::YES } };
 

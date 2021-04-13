@@ -35,9 +35,12 @@ public:
     MKLDNNMemoryDesc getSrcMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) override;
     MKLDNNMemoryDesc getDstMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) override;
 
+    bool canBeExecutedInInt8();
+
     InferenceEngine::Precision getRuntimePrecision() const override;
 
 private:
+    bool withBiases = false;
     bool withGroups = false;
     bool isDW = false;
     size_t groupNum = 1;
@@ -52,8 +55,10 @@ private:
     mkldnn::primitive_attr attr;
     std::vector<MKLDNNMemoryPtr> PostOpsIntBlobMemory;
     void setBiasAsPostOp(const InferenceEngine::Blob::Ptr& biases);
+    InferenceEngine::Blob::Ptr createInternalBlob2(InferenceEngine::SizeVector dims, bool weights, bool isGrouped = false);
 
     const mkldnn::memory& getWeights() const;
+    const mkldnn::memory& getBiases() const;
 };
 
 }  // namespace MKLDNNPlugin

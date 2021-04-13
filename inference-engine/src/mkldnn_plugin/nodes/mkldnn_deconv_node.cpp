@@ -10,6 +10,7 @@
 #include <mkldnn_types.h>
 #include <mkldnn_extension_utils.h>
 #include <legacy/ie_layers_internal.hpp>
+#include <nodes/common/cpu_memcpy.h>
 #include "ie_parallel.hpp"
 #include "utils/general_utils.h"
 
@@ -22,20 +23,110 @@ MKLDNNDeconvolutionNode::MKLDNNDeconvolutionNode(const InferenceEngine::CNNLayer
     internalBlobDesc.emplace_back([&](primitive_desc_iterator &primitive_desc_it, size_t idx) -> MKLDNNMemoryDesc {
         return MKLDNNMemoryDesc(primitive_desc_it.weights_desc(0));
     });
+    internalBlobDesc.emplace_back([&](primitive_desc_iterator &primitive_desc_it, size_t idx) -> MKLDNNMemoryDesc {
+        return MKLDNNMemoryDesc(primitive_desc_it.weights_desc(1));
+    });
+}
+
+// todo: [antonvor]
+InferenceEngine::Blob::Ptr MKLDNNDeconvolutionNode::createInternalBlob2(InferenceEngine::SizeVector dims, bool weights, bool isGrouped) {
+    auto checkSize = [](size_t dst_size, size_t src_size) {
+        if (dst_size < src_size) {
+            IE_THROW() << "Cannot create internal buffer. Buffer can be overrun.";
+        }
+    };
+    auto * wLayer = dynamic_cast<InferenceEngine::WeightableLayer*>(getCnnLayer().get());
+    if (wLayer == nullptr)
+        IE_THROW() << "Cannot get weightable layer for node " << getName() << ".";
+
+    InferenceEngine::Blob::Ptr blb = weights ? wLayer->_weights : wLayer->_biases;
+
+    if (blb == nullptr)
+        IE_THROW() << "Cannot get internal blob layer for node " << getName() << ".";
+
+    InferenceEngine::SizeVector dimsForBlockedDesc{dims};
+    dimsForBlockedDesc.insert(dimsForBlockedDesc.begin() + 2, dimsForBlockedDesc[0]);
+    dimsForBlockedDesc.erase(dimsForBlockedDesc.begin());
+
+    InferenceEngine::SizeVector orderForBlockedDesc{1, 0};
+    for (int i = 2; i < dimsForBlockedDesc.size(); i++)
+        orderForBlockedDesc.push_back(i);
+    BlockingDesc blkDesc(dimsForBlockedDesc, orderForBlockedDesc);
+
+    InferenceEngine::TensorDesc desc(blb->getTensorDesc().getPrecision(), dims, blkDesc);
+
+    auto fillInternalBlob = [&](char *data, size_t intBuffSize) {
+        size_t offset = blb->byteSize();
+        checkSize(intBuffSize, offset);
+        cpu_memcpy_s(data, intBuffSize, blb->buffer(), blb->byteSize());
+        data += blb->byteSize();
+        for (const auto &merged : getMergeWith()) {
+            wLayer = dynamic_cast<InferenceEngine::WeightableLayer*>(merged->getCnnLayer().get());
+            if (wLayer == nullptr)
+                IE_THROW() << "Cannot convert merged weightable layer for node "
+                           << getName() << ".";
+            blb = weights ? wLayer->_weights : wLayer->_biases;
+
+            if (blb == nullptr)
+                IE_THROW() << "Cannot get internal blob layer for node " << getName() << ".";
+            offset += blb->byteSize();
+            checkSize(intBuffSize, offset);
+            cpu_memcpy_s(data, intBuffSize, blb->buffer(), blb->byteSize());
+            data += blb->byteSize();
+        }
+    };
+
+    Blob::Ptr internalBlob;
+    if (blb->getTensorDesc().getPrecision() == Precision::BIN) {
+        internalBlob = InferenceEngine::make_shared_blob<int8_t>(desc);
+    } else if (blb->getTensorDesc().getPrecision() == Precision::I8) {
+        internalBlob = InferenceEngine::make_shared_blob<int8_t>(desc);
+    } else if (blb->getTensorDesc().getPrecision() == Precision::I32) {
+        internalBlob = InferenceEngine::make_shared_blob<int32_t>(desc);
+    } else if (blb->getTensorDesc().getPrecision() == Precision::BF16) {
+        internalBlob = InferenceEngine::make_shared_blob<int16_t>(desc);
+    } else {
+        internalBlob = InferenceEngine::make_shared_blob<float>(desc);
+    }
+    internalBlob->allocate();
+    char *data = internalBlob->buffer();
+    size_t intBuffSize = internalBlob->byteSize();
+
+    fillInternalBlob(data, intBuffSize);
+
+    return internalBlob;
+}
+
+bool MKLDNNDeconvolutionNode::canBeExecutedInInt8() {
+    auto * deconvLayer = dynamic_cast<DeconvolutionLayer*>(getCnnLayer().get());
+    if (deconvLayer == nullptr)
+        IE_THROW() << "Cannot convert deconvolution layer.";
+
+    for (int i = 0; i < deconvLayer->_kernel.size(); i++) {
+        if (deconvLayer->_kernel[i] < deconvLayer->_stride[i])
+            return false;
+    }
+
+    auto inputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(getCnnLayer()->insData[0].lock()->getPrecision());
+    auto weightsDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(deconvLayer->_weights->getTensorDesc().getPrecision());
+
+    return (inputDataType == dnnl_s8 || inputDataType == dnnl_u8) && weightsDataType == dnnl_s8;
 }
 
 void MKLDNNDeconvolutionNode::getSupportedDescriptors() {
     if (!descs_fwd.empty() && !descs_bwd.empty())
         return;
 
-    InferenceEngine::Precision precision = getCnnLayer()->insData[0].lock()->getPrecision();
-    if (precision != InferenceEngine::Precision::FP32 && precision != InferenceEngine::Precision::BF16)
-        precision = InferenceEngine::Precision::FP32;
-    auto inputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(precision);
-    precision = getCnnLayer()->outData[0]->getPrecision();
-    if (precision != InferenceEngine::Precision::FP32 && precision != InferenceEngine::Precision::BF16)
-        precision = InferenceEngine::Precision::FP32;
-    auto outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(precision);
+    InferenceEngine::Precision inPrecision = getCnnLayer()->insData[0].lock()->getPrecision();
+    InferenceEngine::Precision outPrecision = getCnnLayer()->outData[0]->getPrecision();
+    if (!canBeExecutedInInt8()) {
+        if (inPrecision != InferenceEngine::Precision::FP32 && inPrecision != InferenceEngine::Precision::BF16)
+            inPrecision = InferenceEngine::Precision::FP32;
+        if (outPrecision != InferenceEngine::Precision::FP32 && outPrecision != InferenceEngine::Precision::BF16)
+            outPrecision = InferenceEngine::Precision::FP32;
+    }
+    auto inputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(inPrecision);
+    auto outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(outPrecision);
     if (inputDataType == memory::data_type::bf16 || outputDataType == memory::data_type::bf16)
        inputDataType = outputDataType = memory::data_type::bf16;
 
@@ -57,8 +148,8 @@ void MKLDNNDeconvolutionNode::getSupportedDescriptors() {
     isDW = withGroups && deconvLayer->_group == deconvLayer->_out_depth &&
             deconvLayer->_group == deconvLayer->input()->getDims()[1];
 
-    bool withBiases = (deconvLayer->_biases != nullptr && deconvLayer->_biases->size() != 0) || getParentEdges().size() == 3;
-    if (withBiases) {
+    withBiases = (deconvLayer->_biases != nullptr && deconvLayer->_biases->size() != 0) || getParentEdges().size() == 3;
+    if (withBiases && !canBeExecutedInInt8()) {
         Blob::Ptr biases;
 
         if (getParentEdges().size() == 3) {
@@ -96,8 +187,20 @@ void MKLDNNDeconvolutionNode::getSupportedDescriptors() {
         weightDims.push_back(deconvLayer->_kernel[deconvLayer->_kernel.size() - i]);
     }
 
-    if (getParentEdges().size() == 1)
-        internalBlobs.push_back(createInternalBlob(weightDims, true));
+    if (canBeExecutedInInt8()) {
+        weightDims.insert(weightDims.begin() + 2, weightDims[0]);
+        weightDims.erase(weightDims.begin());
+//        weightDims = {weightDims[1], weightDims[0], weightDims[2], weightDims[3]};
+        if (getParentEdges().size() == 1) {
+            internalBlobs.push_back(createInternalBlob2(weightDims, true));
+            if (withBiases) {
+                internalBlobs.push_back(createInternalBlob({ weightDims[0] }, false));
+            }
+        }
+    } else {
+        if (getParentEdges().size() == 1)
+            internalBlobs.push_back(createInternalBlob(weightDims, true));
+    }
 
     invertVectorCopyUtoI(deconvLayer->_stride, stride);
     for (int i = 1; i <= deconvLayer->_dilation.size(); i++) {
@@ -120,10 +223,17 @@ void MKLDNNDeconvolutionNode::getSupportedDescriptors() {
         paddingR[i] = (dst - calc_dst) * stride[i];
     }
 
-    for (auto format : getAvailableFormatsForDims(getParentEdgeAt(0)->getDims())) {
+    if (canBeExecutedInInt8()) {
+        auto format = weightDims.size() == 5 ? dnnl::memory::format_tag::ndhwc : dnnl::memory::format_tag::nhwc;
         MKLDNNMemoryDesc in_candidate(getParentEdgeAt(0)->getDims(), inputDataType, format);
         MKLDNNMemoryDesc out_candidate(getChildEdgeAt(0)->getDims(), outputDataType, format);
         createDescriptor({in_candidate}, {out_candidate});
+    } else {
+        for (auto format : getAvailableFormatsForDims(getParentEdgeAt(0)->getDims())) {
+            MKLDNNMemoryDesc in_candidate(getParentEdgeAt(0)->getDims(), inputDataType, format);
+            MKLDNNMemoryDesc out_candidate(getChildEdgeAt(0)->getDims(), outputDataType, format);
+            createDescriptor({in_candidate}, {out_candidate});
+        }
     }
 }
 
@@ -145,7 +255,10 @@ void MKLDNNDeconvolutionNode::setBiasAsPostOp(const InferenceEngine::Blob::Ptr& 
     auto biases_ptr = biases->buffer().as<float*>();
     std::vector<float> bias(depthwiseSize, 0.0f);
     std::copy(biases_ptr, biases_ptr + biases->size(), bias.begin());
-    PostOpsIntBlobMemory[1]->SetData(memory::data_type::f32, memory::format_tag::x, bias.data(),
+
+    InferenceEngine::Precision biasPrecision = biases->getTensorDesc().getPrecision();
+    auto biasDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(biasPrecision);
+    PostOpsIntBlobMemory[1]->SetData(biasDataType, memory::format_tag::x, bias.data(),
              bias.size() * MKLDNNExtensionUtils::sizeOfDataType(memory::data_type::f32));
 
     ops.append_depthwise(algorithm::depthwise_scale_shift,
@@ -156,8 +269,8 @@ void MKLDNNDeconvolutionNode::setBiasAsPostOp(const InferenceEngine::Blob::Ptr& 
 }
 
 void MKLDNNDeconvolutionNode::filterSupportedPrimitiveDescriptors() {
-    MKLDNNNode::filterSupportedPrimitiveDescriptors();
-    filterSupportedDescriptors();
+//    MKLDNNNode::filterSupportedPrimitiveDescriptors();
+//    filterSupportedDescriptors();
 }
 
 void MKLDNNDeconvolutionNode::filterSupportedDescriptors() {
@@ -193,14 +306,29 @@ void MKLDNNDeconvolutionNode::createPrimitive() {
     if (prim)
         return;
 
-    auto prim_desc = createPrimitiveDescriptor<convolution_backward_data::primitive_desc,
-            convolution_backward_data::desc, convolution_forward::primitive_desc>(attr);
+    if (canBeExecutedInInt8()) {
+        auto prim_desc = createPrimitiveDescriptor<deconvolution_forward::primitive_desc,
+                deconvolution_forward::desc>(attr);
 
-    prim.reset(new convolution_backward_data(prim_desc));
+        prim.reset(new deconvolution_forward(prim_desc));
 
-    auto src = getParentEdgesAtPort(0)[0]->getMemoryPtr()->GetPrimitive();
-    auto dst = getChildEdgesAtPort(0)[0]->getMemoryPtr()->GetPrimitive();
-    primArgs = {{DNNL_ARG_DIFF_DST, src}, {DNNL_ARG_WEIGHTS, getWeights()}, {DNNL_ARG_DIFF_SRC, dst}};
+        auto src = getParentEdgesAtPort(0)[0]->getMemoryPtr()->GetPrimitive();
+        auto dst = getChildEdgesAtPort(0)[0]->getMemoryPtr()->GetPrimitive();
+        if (withBiases) {
+            primArgs = {{DNNL_ARG_SRC, src}, {DNNL_ARG_WEIGHTS, getWeights()}, {DNNL_ARG_DST, dst}, {DNNL_ARG_BIAS, getBiases()}};
+        } else {
+            primArgs = {{DNNL_ARG_SRC, src}, {DNNL_ARG_WEIGHTS, getWeights()}, {DNNL_ARG_DST, dst}};
+        }
+    } else {
+        auto prim_desc = createPrimitiveDescriptor<convolution_backward_data::primitive_desc,
+                convolution_backward_data::desc, convolution_forward::primitive_desc>(attr);
+
+        prim.reset(new convolution_backward_data(prim_desc));
+
+        auto src = getParentEdgesAtPort(0)[0]->getMemoryPtr()->GetPrimitive();
+        auto dst = getChildEdgesAtPort(0)[0]->getMemoryPtr()->GetPrimitive();
+        primArgs = {{DNNL_ARG_DIFF_DST, src}, {DNNL_ARG_WEIGHTS, getWeights()}, {DNNL_ARG_DIFF_SRC, dst}};
+    }
 }
 
 void MKLDNNDeconvolutionNode::createDescriptor(const std::vector<InferenceEngine::TensorDesc> &inputDesc,
@@ -212,41 +340,62 @@ void MKLDNNDeconvolutionNode::createDescriptor(const std::vector<InferenceEngine
     if ((withGroups && !isDW) && (in_candidate.blocksExtended() || out_candidate.blocksExtended()))
         return;
 
-    MKLDNNMemoryDesc wgh_candidate{weightsDims, in_candidate.getDataType(), memory::format_tag::any};
-    for (auto alg : {algorithm::convolution_winograd, algorithm::convolution_direct}) {
-        auto convert = [] (const std::vector<ptrdiff_t>& orig_dims) {
-            return memory::dims(orig_dims.begin(), orig_dims.end());
-        };
+    auto convert = [] (const std::vector<ptrdiff_t>& orig_dims) {
+        return memory::dims(orig_dims.begin(), orig_dims.end());
+    };
 
-        std::shared_ptr<mkldnn::convolution_forward::desc> conv_desc;
-        conv_desc.reset(new convolution_forward::desc(prop_kind::forward_inference, alg,
-                                                      out_candidate, wgh_candidate, in_candidate,
-                                                      convert(stride),
-                                                      convert(dilation),
-                                                      convert(paddingL),
-                                                      convert(paddingR)));
+    if (canBeExecutedInInt8()) {
+        MKLDNNMemoryDesc wgh_candidate{weightsDims, memory::data_type::s8, memory::format_tag::any};
+        std::shared_ptr<mkldnn::deconvolution_forward::desc> deconv_desc2;
+        if (withBiases) {
+            auto * deconvLayer = dynamic_cast<DeconvolutionLayer*>(getCnnLayer().get());
+            auto biasDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(deconvLayer->_biases->getTensorDesc().getPrecision());
+            MKLDNNMemoryDesc bias_candidate{{weightsDims[0]}, biasDataType, memory::format_tag::any};
 
-        std::shared_ptr<mkldnn::convolution_backward_data::desc> deconv_desc;
-        deconv_desc.reset(new convolution_backward_data::desc(alg, out_candidate, wgh_candidate,
-                                                    in_candidate,
-                                                    convert(stride),
-                                                    convert(dilation),
-                                                    convert(paddingL),
-                                                    convert(paddingR)));
-        descs_fwd.push_back(conv_desc);
-        descs_bwd.push_back(deconv_desc);
+            deconv_desc2.reset(new deconvolution_forward::desc(prop_kind::forward_inference, algorithm::deconvolution_direct,
+                                                               in_candidate, wgh_candidate, bias_candidate, out_candidate,
+                                                               convert(stride), convert(dilation),
+                                                               convert(paddingL), convert(paddingR)));
+        } else {
+            deconv_desc2.reset(new deconvolution_forward::desc(prop_kind::forward_inference, algorithm::deconvolution_direct,
+                                                               in_candidate, wgh_candidate, out_candidate,
+                                                               convert(stride), convert(dilation),
+                                                               convert(paddingL), convert(paddingR)));
+        }
+        descs.emplace_back(deconv_desc2);
+    } else {
+        MKLDNNMemoryDesc wgh_candidate{weightsDims, in_candidate.getDataType(), memory::format_tag::any};
+        for (auto alg : {algorithm::convolution_winograd, algorithm::convolution_direct}) {
+            std::shared_ptr<mkldnn::convolution_forward::desc> conv_desc;
+            conv_desc.reset(new convolution_forward::desc(prop_kind::forward_inference, alg,
+                                                          out_candidate, wgh_candidate, in_candidate,
+                                                          convert(stride),
+                                                          convert(dilation),
+                                                          convert(paddingL),
+                                                          convert(paddingR)));
 
-        auto fwd_conv_pd = std::make_shared<convolution_forward::primitive_desc>(*conv_desc, getEngine(), true);
-        if (fwd_conv_pd->get(true) == nullptr)
-            continue;
+            std::shared_ptr<mkldnn::convolution_backward_data::desc> deconv_desc;
+            deconv_desc.reset(new convolution_backward_data::desc(alg, out_candidate, wgh_candidate,
+                                                                  in_candidate,
+                                                                  convert(stride),
+                                                                  convert(dilation),
+                                                                  convert(paddingL),
+                                                                  convert(paddingR)));
+            descs_fwd.push_back(conv_desc);
+            descs_bwd.push_back(deconv_desc);
 
-        descs.emplace_back(deconv_desc, fwd_conv_pd);
+            auto fwd_conv_pd = std::make_shared<convolution_forward::primitive_desc>(*conv_desc, getEngine(), true);
+            if (fwd_conv_pd->get(true) == nullptr)
+                continue;
+
+            descs.emplace_back(deconv_desc, fwd_conv_pd);
+        }
     }
 }
 
 MKLDNNMemoryDesc MKLDNNDeconvolutionNode::getSrcMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) {
     InferenceEngine::TensorDesc desc = idx > 0 ? MKLDNNMemoryDesc(primitive_desc_it.weights_desc(idx - 1))
-                                               : MKLDNNMemoryDesc(primitive_desc_it.diff_dst_desc(idx));
+            : canBeExecutedInInt8() ? MKLDNNMemoryDesc(primitive_desc_it.src_desc(idx)) : MKLDNNMemoryDesc(primitive_desc_it.diff_dst_desc(idx));
 
     if (desc.getLayout() == InferenceEngine::Layout::ANY) {
         return MKLDNNMemoryDesc(InferenceEngine::TensorDesc(desc.getPrecision(),
@@ -274,7 +423,8 @@ MKLDNNMemoryDesc MKLDNNDeconvolutionNode::getSrcMemDesc(mkldnn::primitive_desc_i
 }
 
 MKLDNNMemoryDesc MKLDNNDeconvolutionNode::getDstMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) {
-    InferenceEngine::TensorDesc desc = MKLDNNMemoryDesc(primitive_desc_it.diff_src_desc(idx));
+    InferenceEngine::TensorDesc desc = canBeExecutedInInt8() ? MKLDNNMemoryDesc(primitive_desc_it.dst_desc(idx))
+            : MKLDNNMemoryDesc(primitive_desc_it.diff_src_desc(idx));
     if (desc.getLayout() == InferenceEngine::Layout::ANY)
         return MKLDNNMemoryDesc(InferenceEngine::TensorDesc(desc.getPrecision(),
                                                             getChildEdgeAt(idx)->getDims().ToSizeVector(),
@@ -287,6 +437,10 @@ MKLDNNMemoryDesc MKLDNNDeconvolutionNode::getDstMemDesc(mkldnn::primitive_desc_i
 
 const mkldnn::memory& MKLDNNDeconvolutionNode::getWeights() const {
     return getParentEdges().size() > 1 ? getParentEdgeAt(1)->getMemory().GetPrimitive() : internalBlobMemory[0]->GetPrimitive();
+}
+
+const mkldnn::memory& MKLDNNDeconvolutionNode::getBiases() const {
+    return internalBlobMemory[1]->GetPrimitive();
 }
 
 InferenceEngine::Precision MKLDNNDeconvolutionNode::getRuntimePrecision() const {

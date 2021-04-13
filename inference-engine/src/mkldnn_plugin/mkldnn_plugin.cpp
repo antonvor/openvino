@@ -320,7 +320,8 @@ static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
                 LayerTransformation::Params(params).setPrecisionsOnActivations({ ngraph::element::u8 }).setSupportAsymmetricQuantization(true))
             .addStandaloneCleanup<MultiplyToGroupConvolutionTransformation, ngraph::opset1::Multiply>(
                 LayerTransformation::Params(params).setPrecisionsOnActivations({ ngraph::element::u8 }))
-            .remove<ConvolutionBackpropDataTransformation, ngraph::opset1::ConvolutionBackpropData>());
+            .add<ConvolutionBackpropDataTransformation, ngraph::opset1::ConvolutionBackpropData>(
+                    LayerTransformation::Params(params).setPrecisionsOnActivations({ngraph::element::u8}).setSupportAsymmetricQuantization(true)));
 
         transformer.transform(nGraphFunc);
     }

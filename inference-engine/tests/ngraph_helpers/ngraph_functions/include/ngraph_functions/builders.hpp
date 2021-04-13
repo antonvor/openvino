@@ -15,6 +15,7 @@
 #include <ngraph/opsets/opset6.hpp>
 
 #include "ngraph_functions/utils/data_utils.hpp"
+#include "ngraph_ops/type_relaxed.hpp"
 
 namespace ngraph {
 namespace builder {
@@ -89,6 +90,19 @@ std::shared_ptr<ngraph::Node> makeConvolution(const ngraph::Output<Node> &in,
                                               const std::vector<float> &filterWeights = {},
                                               const std::vector<float> &biasesWeights = {});
 
+std::shared_ptr<ngraph::Node> makeConvolutionRelaxed(const ngraph::Output<Node> &in,
+                                              const element::Type &type,
+                                              const std::vector<size_t> &filterSize,
+                                              const std::vector<size_t> &strides,
+                                              const std::vector<ptrdiff_t> &padsBegin,
+                                              const std::vector<ptrdiff_t> &padsEnd,
+                                              const std::vector<size_t> &dilations,
+                                              const op::PadType &autoPad,
+                                              size_t numOutChannels,
+                                              bool addBiases = false,
+                                              const std::vector<float> &filterWeights = {},
+                                              const std::vector<float> &biasesWeights = {});
+
 std::shared_ptr<ngraph::Node> makeGroupConvolution(const ngraph::Output<Node> &in,
                                                    const element::Type &type,
                                                    const std::vector<size_t> &filterSize,
@@ -136,6 +150,20 @@ std::shared_ptr<ngraph::Node> makeConvolutionBackpropData(const ngraph::Output<N
                                                           const std::vector<size_t> &dilations,
                                                           const op::PadType &autoPad,
                                                           bool addBiases = false,
+                                                          const std::vector<float> &biasesWeights = {});
+
+std::shared_ptr<ngraph::Node> makeConvolutionBackpropDataRelaxed(const ngraph::Output<Node> &in,
+                                                          const element::Type &weiType,
+                                                          const element::Type &outType,
+                                                          const std::vector<size_t> &filterSize,
+                                                          const std::vector<size_t> &strides,
+                                                          const std::vector<ptrdiff_t> &padsBegin,
+                                                          const std::vector<ptrdiff_t> &padsEnd,
+                                                          const std::vector<size_t> &dilations,
+                                                          const op::PadType &autoPad,
+                                                          size_t numOutChannels,
+                                                          bool addBiases = false,
+                                                          const std::vector<float> &filterWeights = {},
                                                           const std::vector<float> &biasesWeights = {});
 
 std::shared_ptr<ngraph::Node> makeCTCGreedyDecoder(

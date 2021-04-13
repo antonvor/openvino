@@ -10,6 +10,7 @@
 #include "shared_test_classes/base/layer_test_utils.hpp"
 #include <exec_graph_info.hpp>
 #include "ie_system_conf.h"
+#include "ngraph_ops/type_relaxed.hpp"
 
 namespace CPUTestUtils {
     typedef enum {
@@ -84,6 +85,36 @@ protected:
     std::string selectedType;
 };
 
+template <typename NodeType>
+class ConvertPrecision : public ngraph::pass::GraphRewrite {
+    class ConvertLayerOutPrecision : public ngraph::pass::MatcherPass {
+    public:
+        ConvertLayerOutPrecision() {
+            auto node = ngraph::pattern::wrap_type<NodeType>();
+
+            ngraph::matcher_pass_callback callback = [](ngraph::pattern::Matcher &m) {
+                auto node = std::dynamic_pointer_cast<NodeType>(m.get_match_root());
+                if (node) {
+                    auto newNode = std::make_shared<ngraph::op::TypeRelaxed<NodeType>>(
+                            *ngraph::as_type_ptr<ngraph::op::TypeRelaxed<NodeType>>(node), ngraph::element::f32);
+                    newNode->set_friendly_name(node->get_friendly_name());
+                    ngraph::replace_node(node, newNode);
+                    return true;
+                }
+                return false;
+            };
+
+            auto m = std::make_shared<ngraph::pattern::Matcher>(node, "ConvertLayerOutPrecision");
+            register_matcher(m, callback);
+        }
+    };
+
+public:
+    ConvertPrecision() {
+        add_matcher<ConvertLayerOutPrecision>();
+    }
+};
+
 const auto emptyCPUSpec = CPUSpecificParams{{}, {}, {}, {}};
 
 const auto conv_ref_2D = CPUSpecificParams{{nchw}, {nchw}, {"ref_any"}, "ref_any"};
@@ -106,6 +137,7 @@ const auto conv_avx512_2D = CPUSpecificParams{{nChw16c}, {nChw16c}, {"jit_avx512
 const auto conv_avx512_3D = CPUSpecificParams{{nCdhw16c}, {nCdhw16c}, {"jit_avx512"}, "jit_avx512"};
 
 const auto conv_avx512_2D_I8 = CPUSpecificParams{{nhwc}, {nhwc}, {"jit_avx512"}, "jit_avx512"};
+const auto conv_avx512_3D_I8 = CPUSpecificParams{{ndhwc}, {ndhwc}, {"jit_avx512"}, "jit_avx512"};
 
 const auto conv_avx512_dw_2D = CPUSpecificParams{{nChw16c}, {nChw16c}, {"jit_avx512_dw"}, "jit_avx512_dw"};
 const auto conv_avx512_dw_3D = CPUSpecificParams{{nCdhw16c}, {nCdhw16c}, {"jit_avx512_dw"}, "jit_avx512_dw"};
