@@ -4,6 +4,7 @@
 
 #include "mkldnn_deconv_node.h"
 #include "mkldnn_eltwise_node.h"
+#include "mkldnn_fake_quantize_node.h"
 #include "mkldnn_input_node.h"
 #include <mkldnn.hpp>
 #include <string>
@@ -143,18 +144,11 @@ InferenceEngine::Blob::Ptr MKLDNNDeconvolutionNode::createWeiBlobAsIO(InferenceE
     return internalBlob;
 }
 
-bool MKLDNNDeconvolutionNode::canBeExecutedInInt8() {
-    if (!impl::cpu::x64::mayiuse(impl::cpu::x64::avx512_common))
-        return false;
-
+bool MKLDNNDeconvolutionNode::canBeExecutedInInt8() const {
     // todo: [antonvor] added these checks to fix performance problems
     if (kernel.size() == 3)
         return false;
     if (!withGroups && IC % 4 != 0 && OC % 4 != 0)
-        return false;
-
-    // todo: [antonvor] fusing is not supported yet for int8
-    if (!fusedWith.empty())
         return false;
 
     for (int i = 0; i < kernel.size(); i++) {
@@ -163,7 +157,11 @@ bool MKLDNNDeconvolutionNode::canBeExecutedInInt8() {
     }
 
     // not supported in oneDNN
-    if (withGroups && !isDW && (IC % 16 != 0 || OC % 16 != 0))
+    int channelBlock = impl::cpu::x64::mayiuse(impl::cpu::x64::avx512_common) ? 16
+            : impl::cpu::x64::mayiuse(impl::cpu::x64::avx2) ? 8 : 4;
+    if (withGroups && !isDW && (IC % channelBlock != 0 || OC % channelBlock != 0))
+        return false;
+    if (!impl::cpu::x64::mayiuse(impl::cpu::x64::avx512_common) && stride.back() > 3)
         return false;
 
     InferenceEngine::Precision inPrecision = getOriginalInputPrecisionAtPort(0);
@@ -176,6 +174,13 @@ bool MKLDNNDeconvolutionNode::canBeExecutedInInt8() {
         return false;
 
     return (inputDataType == dnnl_s8 || inputDataType == dnnl_u8) && weightsDataType == dnnl_s8;
+}
+
+bool MKLDNNDeconvolutionNode::canFuse(const MKLDNNNodePtr& node) const {
+    if (canBeExecutedInInt8())
+        return canFuseSimpleOperation(node);
+
+    return false;
 }
 
 void MKLDNNDeconvolutionNode::getSupportedDescriptors() {
@@ -238,6 +243,11 @@ void MKLDNNDeconvolutionNode::setPostOps(mkldnn::primitive_attr &attr) {
         auto* eltwiseNode = dynamic_cast<MKLDNNEltwiseNode *>(node.get());
         if (eltwiseNode) {
             eltwiseNode->appendPostOps(ops);
+            continue;
+        }
+        auto* fakeQuantizeNode = dynamic_cast<MKLDNNFakeQuantizeNode *>(node.get());
+        if (fakeQuantizeNode) {
+            fakeQuantizeNode->appendPostOps(ops);
             continue;
         }
         IE_THROW() << "Fusing of " << NameFromType(node->getType()) << " operation to " << NameFromType(this->getType()) << " node is not implemented";
