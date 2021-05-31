@@ -146,10 +146,10 @@ InferenceEngine::Blob::Ptr MKLDNNDeconvolutionNode::createWeiBlobAsIO(InferenceE
 
 bool MKLDNNDeconvolutionNode::canBeExecutedInInt8() const {
     // todo: [antonvor] added these checks to fix performance problems
-    if (kernel.size() == 3)
-        return false;
-    if (!withGroups && IC % 4 != 0 && OC % 4 != 0)
-        return false;
+//    if (kernel.size() == 3)
+//        return false;
+//    if (!withGroups && IC % 4 != 0 && OC % 4 != 0)
+//        return false;
 
     for (int i = 0; i < kernel.size(); i++) {
         if (kernel[i] < stride[i])
